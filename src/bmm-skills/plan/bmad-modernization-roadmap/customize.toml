@@ -1,0 +1,69 @@
+# DO NOT EDIT -- overwritten on every update.
+#
+# Workflow customization surface for bmad-modernization-roadmap.
+#
+# Override files (not edited here):
+#   {project-root}/_bmad/custom/bmad-modernization-roadmap.toml         (team)
+#   {project-root}/_bmad/custom/bmad-modernization-roadmap.user.toml    (personal)
+
+[workflow]
+
+# --- Configurable below. Overrides merge per BMad structural rules: ---
+#   scalars: override wins • arrays: append
+
+# Steps to run before the standard activation (config load, greet).
+# Use for pre-flight loads, compliance checks, etc.
+activation_steps_prepend = []
+
+# Steps to run after greet but before the workflow begins.
+# Use for context-heavy setup that should happen once the user has been acknowledged.
+activation_steps_append = []
+
+# Persistent facts the workflow keeps in mind for the whole run
+# (compliance drivers, approved target stacks, freeze windows, org risk appetite).
+# Each entry is either a literal sentence, a skill prefixed with `skill:`, or a `file:`-prefixed
+# path/glob whose contents are loaded as facts.
+#
+# Empty by default. Repo-wide context belongs in AGENTS.md (see bmad-project-context), which every
+# skill already sees; use this for context only this skill needs, loaded on demand rather than
+# carried as constant memory. Common opt-ins (set in team/user override TOML):
+#   "file:{project-root}/**/project-context.md"
+#   "Our compliance freeze runs Nov 15 - Jan 5 -- no cutovers in that window."
+persistent_facts = []
+
+# Executed when the workflow completes (after the roadmap is final and the user has been told).
+# String scalar (single instruction) or array of instructions executed in order. Empty for none.
+on_complete = ""
+
+# Roadmap structure. Treated as a starting point — the LLM adapts it to the system and the
+# number of components in scope. Override the path in team/user TOML to enforce a different
+# structure (e.g. a regulated-industry template with an explicit audit-trail section).
+roadmap_template = "assets/roadmap-template.md"
+
+# Risk-tiering rubric used in Step 3 (strategy per component). Override the path in team/user
+# TOML to enforce an org-specific rubric (e.g. add a regulatory-exposure axis).
+risk_rubric = "assets/risk-tiering-rubric.md"
+
+# Run folder location. MODERNIZATION-ROADMAP.md and its .memlog.md land inside
+# `{roadmap_output_path}/{run_folder_pattern}/`. Resume-check scans `{roadmap_output_path}`
+# for prior unfinished runs.
+roadmap_output_path = "{planning_artifacts}/modernization"
+run_folder_pattern = "modernization-{project_name}-{date}"
+
+# Document standards applied to the rendered roadmap at finalize. Each entry is a `skill:`,
+# `file:`, or plain-text directive; the parent LLM applies the findings before the user sees
+# the draft. Suggested order: structural passes first, prose mechanics last.
+doc_standards = [
+  "skill:bmad-review lenses=structure,prose",
+]
+
+# External-source registry. Natural-language directives describing knowledge bases, MCP tools,
+# or internal systems the LLM may consult ON DEMAND during the run (not preemptively) — EOL/
+# support-window registries, an internal CMDB, an approved-target-stack catalog. Each entry
+# names the tool, the trigger condition, and any fields it needs. If unavailable at runtime,
+# the LLM falls back to standard behavior (web research) and notes the gap. Empty by default.
+#
+# Examples (set in team/user override TOML):
+#   "For EOL and support-window dates, consult corp:eol_registry before web search."
+#   "Before proposing a target stack, check corp:approved_stack_catalog."
+external_sources = []
