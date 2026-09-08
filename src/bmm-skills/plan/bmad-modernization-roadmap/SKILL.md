@@ -36,7 +36,7 @@ Two habits keep the roadmap falsifiable instead of aspirational: pair every assu
 
 **Forwarded activation:** if a caller invoked you with a stated intent and pre-resolved customization fields, honor them verbatim — skip your own intent inference, use the supplied values for those named fields, and resolve only the remaining fields from your own `customize.toml`.
 
-1. Resolve customization: `uv run {project-root}/_bmad/scripts/resolve_customization.py --skill {skill-root} --key workflow` (on failure, read `{skill-root}/customize.toml` directly, use defaults). Run `{workflow.activation_steps_prepend}`, then `{workflow.activation_steps_append}`. Hold `{workflow.persistent_facts}` as standing context and consult `{workflow.external_sources}` on demand.
+1. Resolve customization: `uv run {project-root}/_bmad/scripts/resolve_customization.py --skill {skill-root} --project-root {project-root} --key workflow` (on failure, read `{skill-root}/customize.toml` directly, use defaults). Run `{workflow.activation_steps_prepend}`, then `{workflow.activation_steps_append}`. Hold `{workflow.persistent_facts}` as standing context and consult `{workflow.external_sources}` on demand.
 2. Resolve config: `uv run {project-root}/_bmad/scripts/resolve_config.py --project-root {project-root}` (merges `_bmad/config.toml`, `_bmad/config.user.toml`, and `_bmad/custom/` overrides). Resolve `{user_name}`, `{communication_language}`, `{document_output_language}`, `{project_name}`, `{planning_artifacts}`, and `{date}`; missing keys take neutral defaults, never block.
 3. Headless → follow `references/headless.md` for the whole run. Otherwise greet `{user_name}` in `{communication_language}`.
 4. Check prerequisites — **do not perform discovery or target design yourself**:
@@ -44,6 +44,8 @@ Two habits keep the roadmap falsifiable instead of aspirational: pair every assu
    - **Target state.** Look for `ARCHITECTURE-SPINE.md` or an equivalent target description supplied directly. If absent, offer to invoke the `bmad-architecture` skill first; proceed with a target expressed inline in conversation only for a single-component modernization where a full spine would be overkill.
 5. If a run folder already exists under `{workflow.roadmap_output_path}` for this target, offer to resume from its memlog rather than restart.
 6. If the real ask is discovery, target design, or turning already-scoped work into stories, invoke `bmad-project-context`, `bmad-architecture`, or `bmad-create-epics-and-stories` instead of proceeding here.
+
+For a new roadmap, bind `{doc_workspace}` (see **Workspace**), seed `MODERNIZATION-ROADMAP.md` from `{workflow.roadmap_template}`, run `memlog.py init`, and tell the user the path.
 
 ## Workspace
 
@@ -74,7 +76,7 @@ For each unit, diff current vs. target: paradigm mismatch, boundary violations, 
 
 ### Step 3 — Strategy and rollout mechanism per component
 
-For every unit with a gap, assign a strategy (Rehost / Replatform / Refactor / Rebuild / Replace / Retire), a rollout mechanism (direct cutover / parallel-run validation then cutover / progressive ramp with rollback steps — see **How you work** for the test), and a risk tier (business criticality × blast radius × rollback difficulty — use `{workflow.risk_rubric}`). Show the alternatives considered and why this one wins. Log as `decision` entries, each naming the strategy, the rollout mechanism, the tier, and the rejected alternatives.
+For every unit with a gap, assign a strategy (Rehost / Replatform / Refactor / Rebuild / Replace / Retire), a rollout mechanism (direct cutover / parallel-run validation then cutover / progressive ramp with rollback steps — see **How you work** for the test), and a risk tier (max across business criticality, blast radius, and rollback difficulty — use `{workflow.risk_rubric}`). Show the alternatives considered and why this one wins. Log as `decision` entries, each naming the strategy, the rollout mechanism, the tier, and the rejected alternatives.
 
 When the rollout mechanism includes a parallel-run or comparison phase, the thing doing the comparing is itself a component with a failure mode, not incidental plumbing: give it the same inventory and gap treatment as any other unit, and never let it silently drop the events it's supposed to be comparing. If it correlates two independent streams for the same logical event, key the match on a stable identity, not timestamp proximity, and log the correlation window and reconciliation rule as a `decision` entry.
 
@@ -88,10 +90,10 @@ For every wave using a progressive-ramp rollout mechanism, define the advance cr
 
 ### Step 5 — Finalize
 
-Render `MODERNIZATION-ROADMAP.md` from the memlog via `{workflow.roadmap_template}`. Apply `{workflow.doc_standards}` to the rendered prose. Run `{workflow.on_complete}`. Log `memlog.py append --type event --text "roadmap finalized"`.
+Render `MODERNIZATION-ROADMAP.md` from the memlog via `{workflow.roadmap_template}`. Apply `{workflow.doc_standards}` to the rendered prose. Set the roadmap's own frontmatter `status: final`, `updated: {date}`. Run `{workflow.on_complete}`. Log `uv run {project-root}/_bmad/scripts/memlog.py append --workspace {doc_workspace} --type event --text "roadmap finalized"`.
 
 Tell the user the roadmap's path, then offer to hand wave 1 to `bmad-create-epics-and-stories` — pass the roadmap path and the wave's scope; don't re-explain its contents. For a change discovered mid-execution of an already-approved wave, route to `bmad-correct-course` rather than re-running this skill from scratch.
 
 ## Update
 
-Amend an existing roadmap in place: resume from its `.memlog.md` (the authority on inventory, gaps, and decisions already made), not the rendered file. Capture the change as new memlog entries — a re-tiered risk, a strategy reversal, a wave re-sequenced by a newly-discovered dependency — then re-render per Finalize. Keep prior `decision` entries intact; a reversal is a new entry that supersedes the old one, never an edit to it.
+Amend an existing roadmap in place: resume from its `.memlog.md` (the authority on inventory, gaps, and decisions already made), not the rendered file. Capture the change as new memlog entries — a re-tiered risk, a strategy reversal, a wave re-sequenced by a newly-discovered dependency — then re-render and close as in Finalize. Keep prior `decision` entries intact; a reversal is a new entry that supersedes the old one, never an edit to it.

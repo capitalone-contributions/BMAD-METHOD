@@ -26,6 +26,7 @@
         "./src/bmm-skills/agents/bmad-agent-ux-designer",
         "./src/bmm-skills/plan/bmad-architecture",
         "./src/bmm-skills/plan/bmad-create-epics-and-stories",
+        "./src/bmm-skills/plan/bmad-modernization-roadmap",
         "./src/bmm-skills/plan/bmad-prd",
         "./src/bmm-skills/plan/bmad-prfaq",
         "./src/bmm-skills/plan/bmad-product-brief",
