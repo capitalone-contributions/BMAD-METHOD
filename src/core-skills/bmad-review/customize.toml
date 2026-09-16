@@ -58,6 +58,19 @@ report_path = ""
 #   output_preferences = "Cap output at the 20 highest-impact findings."
 output_preferences = ""
 
+# --- Diagram lens settings ---
+
+# Optional renderer the diagram lens consults for what a text scan cannot judge: whether
+# a diagram compiles at all, and whether its layout is legible. Freeform directive naming
+# the tool and how to invoke it; empty means the lens runs its text checks only and says
+# so. A renderer is never installed on demand, and its absence is never a finding.
+#
+# Example (set in team/user override TOML) using the archify skill:
+#   diagram_renderer = "Invoke the `archify` skill to validate the diagram, passing the
+#     mermaid source; treat only its reported errors as findings, never its styling
+#     preferences."
+diagram_renderer = ""
+
 # --- Editorial lens settings (used by the structure and prose lenses) ---
 
 # Default reader the editorial lenses calibrate for when the request doesn't
@@ -124,6 +137,13 @@ name = "Verification Gap"
 applies_to = "code"
 when = "Reviewed inside a repo where tests can be searched and read."
 instruction = "Load `references/lens-verification-gap.md` from the skill root and follow it."
+
+[[workflow.lenses]]
+code = "diagram"
+name = "Diagram"
+applies_to = "any"
+when = "Content containing a fenced diagram block — architecture maps, dependency and cutover graphs, sequence diagrams, state machines. Skip content with no diagram."
+instruction = "Load `references/lens-diagram.md` from the skill root and follow it."
 
 [[workflow.lenses]]
 code = "structure"
