@@ -4,7 +4,7 @@ No interactive user: infer everything, ask nothing, but never invent — record 
 
 ## Inputs the caller is expected to provide
 
-- `intent` — `"create"` or `"update"`. If absent, infer from whether a roadmap already exists at the target workspace.
+- `intent` — `"create"`, `"update"`, or `"validate"`. If absent, infer from whether a roadmap already exists at the target workspace. Under `validate`, run the Reviewer Gate against the existing roadmap and return its findings; never edit the roadmap or append to the memlog.
 - **Current-state source** — a path to a `bmad-project-context`-maintained `AGENTS.md`, or an inline current-state description. If absent and undiscoverable, do not scan the codebase yourself — record `open_questions[]: "no current-state source; run bmad-project-context first"` and proceed only with what the conversation supplies.
 - **Target-state source** — a path to `ARCHITECTURE-SPINE.md` or an inline target description. If absent, same handling: record the gap rather than inventing a target.
 - `doc_workspace` if a specific run folder is required (otherwise the workflow binds the default from `{workflow.roadmap_output_path}`).
@@ -21,7 +21,7 @@ End with JSON only, omitting keys for artifacts not produced:
 ```json
 {
   "status": "complete | partial | blocked",
-  "intent": "create | update",
+  "intent": "create | update | validate",
   "doc_workspace": "<resolved run folder>",
   "roadmap": "{doc_workspace}/MODERNIZATION-ROADMAP.md",
   "memlog": "{doc_workspace}/.memlog.md",

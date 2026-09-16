@@ -50,6 +50,32 @@ risk_rubric = "assets/risk-tiering-rubric.md"
 roadmap_output_path = "{planning_artifacts}/modernization"
 run_folder_pattern = "modernization-{project_name}-{date}"
 
+# Where the Validate intent writes its report. Empty = surface findings in chat only. Accepts
+# `{project-root}`- and `{doc_workspace}`-prefixed paths; set it to a template path instead to
+# render into your own report skeleton (e.g. a regulated-industry audit format).
+validation_report_path = ""
+
+# Deterministic integrity pass run at the Reviewer Gate, before the judgment lenses. Set to ""
+# to skip the mechanical floor.
+roadmap_linter = "scripts/lint_roadmap.py"
+
+# --- Finalize reviewers ---
+# Review lenses spawned as parallel subagents at the Reviewer Gate (Finalize and the Validate
+# intent), on top of the mechanical floor. Whenever the gate runs, every entry here runs with it;
+# only ad-hoc lenses are optional, and headless never skips the gate.
+#
+# Entries follow the standard prefix convention:
+#   "skill:NAME"   invoke the named review skill as a subagent against MODERNIZATION-ROADMAP.md
+#   "file:PATH"    load the file as a review prompt; spawn an adversarial subagent applying it
+#   plain text     use the text directly as the subagent's review prompt
+#
+# Resolved on-demand (not at activation). Override TOML may append.
+finalize_reviewers = [
+  "Attack the wave sequencing as an adversary: find any ordering that exists because it reads well rather than because a real cutover dependency forces it, and any wave whose components could ship independently. Each one you find is a wave that should split or run in parallel.",
+  "Take the highest-risk wave and fail it mid-rollout. Walk the stated rollback path step by step against the component's data migration and contract changes: is the rollback actually reversible, or does it assume a reversibility the migration does not have? Flag every guarantee whose named mechanism would not hold.",
+  "Check each claimed guarantee against the mechanism named for it, and each High-tier component against the rubric's isolation rule (a High-tier component does not share a wave with unrelated risky work). A guarantee with no mechanism behind it is a hope; report it.",
+]
+
 # Document standards applied to the rendered roadmap at finalize. Each entry is a `skill:`,
 # `file:`, or plain-text directive; the parent LLM applies the findings before the user sees
 # the draft. Suggested order: structural passes first, prose mechanics last.

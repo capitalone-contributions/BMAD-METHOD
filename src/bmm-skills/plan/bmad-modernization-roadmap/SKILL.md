@@ -44,6 +44,7 @@ Two habits keep the roadmap falsifiable instead of aspirational: pair every assu
    - **Target state.** Look for `ARCHITECTURE-SPINE.md` or an equivalent target description supplied directly. If absent, offer to invoke the `bmad-architecture` skill first; proceed with a target expressed inline in conversation only for a single-component modernization where a full spine would be overkill.
 5. If a run folder already exists under `{workflow.roadmap_output_path}` for this target, offer to resume from its memlog rather than restart.
 6. If the real ask is discovery, target design, or turning already-scoped work into stories, invoke `bmad-project-context`, `bmad-architecture`, or `bmad-create-epics-and-stories` instead of proceeding here.
+7. Detect intent: **Create**, **Update** (see **Update**), or **Validate** — critique an existing roadmap without changing it. Validate runs the gate and reports; it never edits the roadmap or appends to the memlog.
 
 For a new roadmap, bind `{doc_workspace}` (see **Workspace**), seed `MODERNIZATION-ROADMAP.md` from `{workflow.roadmap_template}`, run `memlog.py init`, and tell the user the path.
 
@@ -55,6 +56,7 @@ For a new roadmap, bind `{doc_workspace}` (see **Workspace**), seed `MODERNIZATI
 {doc_workspace}/
   MODERNIZATION-ROADMAP.md   ← distilled from .memlog.md, never hand-edited
   .memlog.md                 ← canonical, append-only decision record
+  reviews/                   ← one review-{slug}.md per gate lens; scratch, not deliverable
 ```
 
 The memlog is the run's working memory — every inventoried unit, gap, strategy decision, and decommission criterion lands as one append-only line as the conversation unfolds. The roadmap file is **distilled from the memlog at the end**, not written as you go. Resume a prior run by reloading its memlog, never the rendered roadmap.
@@ -63,6 +65,10 @@ Writes go through the shared script (don't read the file back except on resume):
 
 - `uv run {project-root}/_bmad/scripts/memlog.py init --workspace {doc_workspace} --field scope="…" --field current_state_source="…" --field target_state_source="…"`
 - `uv run {project-root}/_bmad/scripts/memlog.py append --workspace {doc_workspace} --type <inventory|gap|decision|dependency|wave-criteria|decommission-criteria|assumption|question|event> --text "…"`
+
+## Reviewer Gate
+
+Used by Validate and Finalize. Mechanical floor first: `uv run {skill-root}/{workflow.roadmap_linter} --workspace {doc_workspace}` settles cutover cycles, orphaned components, retirements with no criteria, ramps with no advance/rollback thresholds, and surviving placeholders — reviewers then spend judgment on the semantic half. **Opt-in, lens-selectable** — reviewers are costly (parallel subagents). At **Finalize**, ask whether to run the gate; default offered, easy skip, and scale by stakes (a single-component migration may skip; a platform-wide roadmap earns the full menu). At **Validate** the user already opted in — skip that question. Headless never skips the gate. Menu: `{workflow.finalize_reviewers}` + ad-hoc lenses the roadmap's risk tiers warrant. Picked lenses dispatch as parallel subagents against `MODERNIZATION-ROADMAP.md` → each writes `{doc_workspace}/reviews/review-{slug}.md` and returns only a compact summary (verdict, top findings, path); the parent never holds full review text. Surface findings tiered: gate verdict, then critical + high, with medium/low rolled into a tail. At Finalize apply the clear fixes yourself and log each as a `decision` entry; under Validate, report and change nothing — write the report to `{workflow.validation_report_path}` when it is set, otherwise surface it in chat.
 
 ## The Operation
 
@@ -90,10 +96,10 @@ For every wave using a progressive-ramp rollout mechanism, define the advance cr
 
 ### Step 5 — Finalize
 
-Render `MODERNIZATION-ROADMAP.md` from the memlog via `{workflow.roadmap_template}`. Apply `{workflow.doc_standards}` to the rendered prose. Set the roadmap's own frontmatter `status: final`, `updated: {date}`. Run `{workflow.on_complete}`. Log `uv run {project-root}/_bmad/scripts/memlog.py append --workspace {doc_workspace} --type event --text "roadmap finalized"`.
+Render `MODERNIZATION-ROADMAP.md` from the memlog via `{workflow.roadmap_template}`. Run the **Reviewer Gate** and resolve its findings, then apply `{workflow.doc_standards}` to the rendered prose. Set the roadmap's own frontmatter `status: final`, `updated: {date}`. Run `{workflow.on_complete}`. Log `uv run {project-root}/_bmad/scripts/memlog.py append --workspace {doc_workspace} --type event --text "roadmap finalized"`.
 
 Tell the user the roadmap's path, then offer to hand wave 1 to `bmad-create-epics-and-stories` — pass the roadmap path and the wave's scope; don't re-explain its contents. For a change discovered mid-execution of an already-approved wave, route to `bmad-correct-course` rather than re-running this skill from scratch.
 
 ## Update
 
-Amend an existing roadmap in place: resume from its `.memlog.md` (the authority on inventory, gaps, and decisions already made), not the rendered file. Capture the change as new memlog entries — a re-tiered risk, a strategy reversal, a wave re-sequenced by a newly-discovered dependency — then re-render and close as in Finalize. Keep prior `decision` entries intact; a reversal is a new entry that supersedes the old one, never an edit to it.
+Amend an existing roadmap in place: resume from its `.memlog.md` (the authority on inventory, gaps, and decisions already made), not the rendered file. Capture the change as new memlog entries — a re-tiered risk, a strategy reversal, a wave re-sequenced by a newly-discovered dependency — then re-render and close as in Finalize, gate included: an amendment that moves a component between waves is exactly when the mechanical floor earns its keep. Keep prior `decision` entries intact; a reversal is a new entry that supersedes the old one, never an edit to it.
