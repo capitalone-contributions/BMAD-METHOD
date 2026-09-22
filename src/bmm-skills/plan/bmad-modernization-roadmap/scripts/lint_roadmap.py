@@ -40,7 +40,29 @@ FENCE = re.compile(r"```.*?```", re.DOTALL)
 PLACEHOLDER_WORD = re.compile(r"\b(TBD|TODO|FIXME|XXX)\b")
 TEMPLATE_TOKEN = re.compile(r"\{[a-z_][a-z0-9_ /.-]*\}")
 STRATEGY_HEADING = re.compile(r"^###\s+(.+?)\s+—\s+(Rehost|Replatform|Refactor|Rebuild|Replace|Retire)\s*$", re.M)
-MERMAID_EDGE = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*-->\s*([A-Za-z0-9_.-]+)\s*$", re.M)
+# Edge parsing survives realistic mermaid: longest-arrow-first alternation, optional node
+# shapes on the source (`a[Label] --> b`), and optional edge labels (`a -->|shares data| b`).
+# A naive `id --> id` regex silently drops decorated edges — missing cycles and falsely
+# reporting an empty graph.
+ARROW = r"(?:-\.->|-->>|==>|-->|---|->>|=>|->)"
+MERMAID_EDGE = re.compile(
+    r"^[ \t]*([A-Za-z0-9_.\-]+?)\s*(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})?\s*"
+    + ARROW
+    + r"\s*(?:\|[^|]*\|)?\s*([A-Za-z0-9_.\-]+)",
+    re.MULTILINE,
+)
+
+
+def _bare(cell: str) -> str:
+    """Strip markdown emphasis, code ticks, and link syntax from a name cell."""
+    cell = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", cell)
+    return cell.replace("`", "").replace("*", "").replace("_", " ").strip()
+
+
+def _norm(name: str) -> str:
+    """Compare names ignoring case and separator style, so `notify-svc`, notify_svc, and
+    'Notify Svc' all match."""
+    return re.sub(r"[\s_.\-]+", "", _bare(name)).lower()
 
 
 def split_frontmatter(text: str) -> tuple[str, str, int]:
@@ -115,35 +137,63 @@ def find_retire_without_criteria(body: str, offset: int) -> list[dict]:
     """Every component marked Retire needs a Decommission Criteria row.
     The skill's rule: 'a retirement with no criteria is not yet a decision.'"""
     findings = []
-    decommissioned = {r[0].lower() for r in section_rows(body, "Decommission Criteria") if r and r[0]}
+    decommissioned = {_norm(r[0]) for r in section_rows(body, "Decommission Criteria") if r and r[0]}
     for m in STRATEGY_HEADING.finditer(blank_fences(body)):
         comp, strat = m.group(1).strip(), m.group(2)
-        if strat == "Retire" and comp.lower() not in decommissioned:
+        if strat == "Retire" and _norm(comp) not in decommissioned:
             findings.append({"category": "retire_no_criteria", "severity": "high",
-                             "detail": f"{comp!r} is strategy Retire but has no Decommission Criteria row",
+                             "detail": f"{_bare(comp)!r} is strategy Retire but has no Decommission Criteria row",
                              "location": f"{ROADMAP} (line {offset + line_of(blank_fences(body), m.start())})"})
     return findings
 
 
 def find_ramp_without_criteria(body: str, offset: int) -> list[dict]:
-    """Progressive-ramp components need advance criteria AND distinct rollback triggers."""
+    """Progressive-ramp components need advance criteria AND distinct rollback triggers.
+
+    Coverage is checked per component, not just "does the table exist": a ramp component
+    whose wave has no criteria row is flagged even when other waves are covered. The
+    component→wave link comes from Wave Sequencing, and the wave→criteria link from the
+    criteria table's `wave / step` first column, both matched with the shared normalizer.
+    A component whose wave cannot be located is not flagged — silence beats a false
+    positive from an incomplete Wave Sequencing table."""
     findings = []
     scan = blank_fences(body)
-    rows = section_rows(body, "Wave Advance & Rollback Criteria")
-    have_criteria = bool(rows)
-    identical = [r for r in rows if len(r) >= 3 and r[1] and r[1] == r[2]]
+    criteria_rows = section_rows(body, "Wave Advance & Rollback Criteria")
+    # Wave labels that have at least one criteria row (prefix before the "/ step").
+    covered_waves = {_norm(r[0].split("/")[0]) for r in criteria_rows if r and r[0]}
+    # component -> set of wave labels it belongs to, from Wave Sequencing.
+    comp_waves: dict[str, set[str]] = {}
+    for r in section_rows(body, "Wave Sequencing"):
+        if len(r) < 2 or not r[0] or not r[1]:
+            continue
+        wave = _norm(r[0])
+        for part in re.split(r"[,;]", r[1]):
+            c = _norm(part)
+            if c:
+                comp_waves.setdefault(c, set()).add(wave)
+
     for m in STRATEGY_HEADING.finditer(scan):
         comp = m.group(1).strip()
         nxt = HEADING.search(scan, m.end())
         block = scan[m.end():nxt.start()] if nxt else scan[m.end():]
-        if "progressive ramp" in block.lower() and not have_criteria:
+        if "progressive ramp" not in block.lower():
+            continue
+        loc = f"{ROADMAP} (line {offset + line_of(scan, m.start())})"
+        if not criteria_rows:
             findings.append({"category": "ramp_no_criteria", "severity": "high",
-                             "detail": f"{comp!r} uses a progressive ramp but no Wave Advance & Rollback Criteria rows exist",
-                             "location": f"{ROADMAP} (line {offset + line_of(scan, m.start())})"})
-    for r in identical:
-        findings.append({"category": "ramp_no_criteria", "severity": "medium",
-                         "detail": f"step {r[0]!r} advance criteria and rollback trigger are identical; they fire at different times and must differ",
-                         "location": f"{ROADMAP} Wave Advance & Rollback Criteria"})
+                             "detail": f"{_bare(comp)!r} uses a progressive ramp but no Wave Advance & Rollback Criteria rows exist",
+                             "location": loc})
+            continue
+        waves = comp_waves.get(_norm(comp))
+        if waves and not (waves & covered_waves):
+            findings.append({"category": "ramp_no_criteria", "severity": "high",
+                             "detail": f"{_bare(comp)!r} uses a progressive ramp but its wave has no Advance & Rollback Criteria row",
+                             "location": loc})
+    for r in criteria_rows:
+        if len(r) >= 3 and r[1] and r[1] == r[2]:
+            findings.append({"category": "ramp_no_criteria", "severity": "medium",
+                             "detail": f"step {r[0]!r} advance criteria and rollback trigger are identical; they fire at different times and must differ",
+                             "location": f"{ROADMAP} Wave Advance & Rollback Criteria"})
     return findings
 
 
@@ -214,23 +264,31 @@ def find_orphan_components(body: str, offset: int) -> list[dict]:
     once — not again for each later section it also falls out of — so a single defect never
     reads as several and trains reviewers to skim the category."""
     findings = []
-    inventory = {r[0].lower() for r in section_rows(body, "Component Inventory") if r and r[0]}
-    gaps = {r[0].lower() for r in section_rows(body, "Gap Analysis") if r and r[0]}
-    strategies = {m.group(1).strip().lower() for m in STRATEGY_HEADING.finditer(blank_fences(body))}
+    inventory = {_norm(r[0]) for r in section_rows(body, "Component Inventory") if r and r[0]}
+    # Referenced names keyed by normalized form, valued by a readable display form, so a
+    # finding says 'notify-svc' rather than the comparison key 'notifysvc'.
+    referenced: dict[str, str] = {}
+    gaps: set[str] = set()
+    strategies: set[str] = set()
+    for r in section_rows(body, "Gap Analysis"):
+        if r and r[0]:
+            k = _norm(r[0]); gaps.add(k); referenced.setdefault(k, _bare(r[0]))
+    for m in STRATEGY_HEADING.finditer(blank_fences(body)):
+        k = _norm(m.group(1)); strategies.add(k); referenced.setdefault(k, _bare(m.group(1)))
     reported: set[str] = set()
 
-    def report(name: str, severity: str, detail: str, section: str) -> None:
-        if name in reported:
+    def report(key: str, severity: str, make_detail, section: str) -> None:
+        if key in reported:
             return
-        reported.add(name)
+        reported.add(key)
         findings.append({"category": "orphan_component", "severity": severity,
-                         "detail": detail, "location": f"{ROADMAP} {section}"})
+                         "detail": make_detail(referenced.get(key, key)), "location": f"{ROADMAP} {section}"})
 
     # Not in Inventory is the root defect — report it before the downstream consequences.
     for c in sorted((gaps | strategies) - inventory):
-        report(c, "high", f"{c!r} is referenced but is not in Component Inventory", "Gap Analysis")
+        report(c, "high", lambda n: f"{n!r} is referenced but is not in Component Inventory", "Gap Analysis")
     for g in sorted(gaps - strategies):
-        report(g, "high", f"{g!r} has a gap but no strategy block", "Gap Analysis")
+        report(g, "high", lambda n: f"{n!r} has a gap but no strategy block", "Gap Analysis")
     # Deliberately not checked: a strategy with no Gap Analysis row. The skill requires
     # "for every unit with a gap, assign a strategy" — not the converse — so flagging it
     # would enforce a rule the roadmap never states.

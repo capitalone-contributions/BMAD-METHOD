@@ -186,6 +186,44 @@ class LintRoadmapTest(unittest.TestCase):
         findings = lint(CLEAN)["findings"]
         self.assertEqual([f for f in findings if "shared-lib" in f["detail"]], [])
 
+    def test_cycle_detected_through_labeled_edges(self):
+        # a labeled edge (`a -->|why| b`) must still parse — otherwise the cycle is missed
+        # and the block is falsely reported empty
+        text = CLEAN.replace(
+            "  claims-db --> claims-intake\n  claims-intake --> notify-svc",
+            "  claims-db -->|shares data| claims-intake\n"
+            "  claims-intake -->|calls| claims-db",
+        )
+        result = lint(text)
+        self.assertIn("wave_cycle", cats(result))
+        self.assertNotIn("empty_graph", cats(result))
+
+    def test_cycle_detected_through_node_shapes(self):
+        # a node shape on the source (`a[Label] --> b`) must not defeat edge parsing
+        text = CLEAN.replace(
+            "  claims-db --> claims-intake\n  claims-intake --> notify-svc",
+            "  claims-db[Claims DB] --> claims-intake\n"
+            "  claims-intake --> claims-db",
+        )
+        self.assertIn("wave_cycle", cats(lint(text)))
+
+    def test_backticked_names_match_plain_table_rows(self):
+        # `notify-svc` in a heading is the same component as notify-svc in a table;
+        # normalization must prevent false retire_no_criteria / orphan findings
+        text = CLEAN.replace("### notify-svc — Retire", "### `notify-svc` — Retire")
+        result = lint(text)
+        self.assertNotIn("retire_no_criteria", cats(result))
+        self.assertNotIn("orphan_component", cats(result))
+
+    def test_ramp_component_in_uncovered_wave_is_flagged(self):
+        # claims-intake (progressive ramp) sits in wave-2, which has a criteria row.
+        # Move it to a wave with none: the ramp must be flagged even though wave-2 is covered.
+        text = CLEAN.replace(
+            "| wave-2 | claims-intake | wave-1 | none |",
+            "| wave-3 | claims-intake | wave-1 | none |",
+        )
+        self.assertIn("ramp_no_criteria", cats(lint(text)))
+
     def test_missing_roadmap_reports_error_not_crash(self):
         # exit code is always 0 — findings and errors travel in the JSON
         with tempfile.TemporaryDirectory() as tmp:
