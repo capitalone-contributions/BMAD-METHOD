@@ -56,11 +56,11 @@ class CheckDiagramTest(unittest.TestCase):
         self.assertEqual(result["diagram_blocks"], 1)
 
     def test_node_missing_from_tables_caught(self):
-        # `fraudcheck` is in the graph but nobody declared it
-        text = CLEAN.replace("  ledger --> notifier", "  ledger --> fraudcheck")
+        # `metrics` is in the graph but nobody declared it
+        text = CLEAN.replace("  ledger --> notifier", "  ledger --> metrics")
         result = check(text)
         self.assertIn("undeclared_node", self.cats(result))
-        self.assertTrue(any("fraudcheck" in f["detail"] for f in result["findings"]))
+        self.assertTrue(any("metrics" in f["detail"] for f in result["findings"]))
 
     def test_table_row_missing_from_graph_is_not_flagged(self):
         # a table row no diagram draws is normal on real documents; whether the omission
@@ -177,10 +177,20 @@ graph LR
 
     def test_partial_overlap_still_flags_the_omission(self):
         # a graph that names two known components and one unknown is the real case
-        text = CLEAN.replace("  ledger --> notifier", "  ledger --> notifier\n  notifier --> fraudcheck")
+        text = CLEAN.replace("  ledger --> notifier", "  ledger --> notifier\n  notifier --> metrics")
         result = check(text)
         self.assertIn("undeclared_node", self.cats(result))
-        self.assertTrue(any("fraudcheck" in f["detail"] for f in result["findings"]))
+        self.assertTrue(any("metrics" in f["detail"] for f in result["findings"]))
+
+    def test_decision_diamond_is_not_a_missing_component(self):
+        # `gate{ok?}` is a mermaid rhombus — flow control, not a system component — so it
+        # has no table row on purpose and must not be flagged as an undeclared node
+        text = CLEAN.replace(
+            "  ledger --> notifier",
+            "  ledger --> gate{ok?}\n  gate -->|yes| notifier",
+        )
+        result = check(text)
+        self.assertEqual([f for f in result["findings"] if "gate" in f["detail"]], [])
 
     def test_missing_file_reports_error_not_crash(self):
         with tempfile.TemporaryDirectory() as tmp:

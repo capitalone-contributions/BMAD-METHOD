@@ -50,6 +50,9 @@ EDGE = re.compile(
 )
 NODE_DECL = re.compile(r"^\s*([A-Za-z0-9_.\-]+)\s*(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})\s*$", re.MULTILINE)
 PARTICIPANT = re.compile(r"^\s*(?:participant|actor)\s+([A-Za-z0-9_.\-]+)", re.MULTILINE)
+# A node drawn as a decision diamond `id{...}` or hexagon `id{{...}}` is flow control, not a
+# component — captured anywhere it appears, even inline on an edge line.
+GATEWAY_DECL = re.compile(r"([A-Za-z0-9_.\-]+)\{\{?[^}]*\}\}?")
 DIRECTIVE = re.compile(
     r"^\s*(graph|flowchart|sequenceDiagram|stateDiagram(?:-v2)?|classDiagram|erDiagram)\b"
 )
@@ -78,8 +81,14 @@ def diagram_blocks(text: str) -> list[dict]:
     return blocks
 
 
-def graph_entities(body: str) -> tuple[set[str], list[tuple[str, str]]]:
-    """Nodes and directed edges declared in one diagram body."""
+def graph_entities(body: str) -> tuple[set[str], list[tuple[str, str]], set[str]]:
+    """Nodes, directed edges, and gateway ids declared in one diagram body.
+
+    A gateway is a node drawn as a decision diamond (`id{...}`) or hexagon (`id{{...}}`) —
+    mermaid flow control, not a system component. They are real nodes for cycle, self-edge,
+    and orphan purposes, but must not be cross-checked against a component table: a
+    `decision{approve?}` diamond legitimately has no table row, and flagging it would train
+    reviewers to ignore the category that also catches a genuinely missing component."""
     edges = [
         (a, b)
         for a, b in EDGE.findall(body)
@@ -90,7 +99,8 @@ def graph_entities(body: str) -> tuple[set[str], list[tuple[str, str]]]:
         for name in rx.findall(body):
             if name.lower() not in RESERVED:
                 nodes.add(name)
-    return nodes, edges
+    gateways = {g for g in GATEWAY_DECL.findall(body) if g.lower() not in RESERVED}
+    return nodes, edges, gateways
 
 
 def table_entities(text: str) -> set[str]:
@@ -166,8 +176,9 @@ def check(text: str) -> dict:
     all_graph_norm: set[str] = set()
 
     for block in blocks:
-        nodes, edges = graph_entities(block["body"])
+        nodes, edges, gateways = graph_entities(block["body"])
         all_graph_norm |= {_norm(n) for n in nodes}
+        gateway_norm = {_norm(g) for g in gateways}
         loc = f"line {block['line']}"
 
         if not nodes and not edges:
@@ -210,7 +221,8 @@ def check(text: str) -> dict:
             node_norms = {_norm(n) for n in nodes}
             if node_norms & table_norm:
                 for n in sorted(nodes):
-                    if _norm(n) not in table_norm:
+                    # Gateways are flow control, not components — never cross-checked.
+                    if _norm(n) not in table_norm and _norm(n) not in gateway_norm:
                         findings.append({
                             "category": "undeclared_node", "location": loc,
                             "detail": f"{n!r} appears in the diagram but in no table row",
