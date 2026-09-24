@@ -119,6 +119,9 @@ jobs:
       - name: Test sprint-planning scripts
         run: npm run test:sprint-planning
 
+      - name: Test modernization-roadmap linter
+        run: npm run test:modernization-roadmap
+
       - name: Validate file references
         run: npm run validate:refs
 

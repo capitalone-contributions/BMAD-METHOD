@@ -4,10 +4,12 @@
 # ///
 """lint-roadmap — the mechanical half of roadmap integrity, done deterministically.
 
-LLMs write a cutover graph in one place and a wave table in another, then miss that the
-two disagree; a graph walk does not. This linter owns the checks a script does better
-than a prompt, and leaves the semantic half (is this wave order justified? is the
-rollback real?) to the Reviewer Gate's lenses.
+An LLM re-reading its own cutover graph misses a cycle that makes the whole plan
+impossible; a graph walk does not. This linter owns the checks a script does better than a
+prompt — cycle detection, cross-section name agreement, placeholder scanning — and leaves
+the semantic half (is this wave order justified? is the rollback real?) to the Reviewer
+Gate's lenses. It does not judge whether the graph is the *right* decomposition, only that
+it is internally consistent.
 
 It reads MODERNIZATION-ROADMAP.md from a workspace and reports, as compact JSON on stdout:
 
