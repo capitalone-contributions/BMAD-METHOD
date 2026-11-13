@@ -58,6 +58,11 @@ description = "Produce the architecture spine: the invariants that keep independ
 skill = "bmad-architecture"
 
 [[agent.menu]]
+code = "MR"
+description = "Turn a legacy system's current state and target architecture into a phased, risk-tiered modernization roadmap"
+skill = "bmad-modernization-roadmap"
+
+[[agent.menu]]
 code = "IR"
 description = "Check implementation readiness — verify the planning artifacts are complete and aligned (opens sprint planning; stop after the gate or continue into tracking)"
 skill = "bmad-sprint-planning"
