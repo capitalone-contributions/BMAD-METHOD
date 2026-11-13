@@ -40,14 +40,20 @@ sys.dont_write_bytecode = True
 FENCE = re.compile(r"^```(\w+)[^\n]*\n(.*?)^```", re.DOTALL | re.MULTILINE)
 DIAGRAM_LANGS = {"mermaid"}
 # Arrow alternation is longest-first: `->` placed before `-->` would match the first two
-# characters and leave `-` as the target node.
-ARROW = r"(?:-\.->|-->>|==>|-->|---|->>|=>|->)"
-EDGE = re.compile(
-    r"^[ \t]*([A-Za-z0-9_.\-]+?)\s*(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})?\s*"
-    + ARROW
-    + r"\s*(?:\|[^|]*\|)?\s*([A-Za-z0-9_.\-]+)",
-    re.MULTILINE,
-)
+# characters and leave `-` as the target node. The final alternative matches a dash-style
+# inline edge label with no `|pipe|` (`a-- some text -->b`) — common mermaid syntax that
+# the literal tokens alone don't cover.
+ARROW = r"(?:-\.->|-->>|==>|-->|---|->>|=>|->|--[ \t]*[^\n|]+?[ \t]*(?:-->|---))"
+SHAPE = r"(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})"
+# One hop: source node, optional shape, arrow, optional pipe label, then a zero-width
+# lookahead on the target so the match doesn't consume it — the target can then serve as
+# the source of the next hop when a line chains edges (`a --> b --> c`).
+_HOP = r"([A-Za-z0-9_.\-]+?)\s*" + SHAPE + r"?\s*" + ARROW + r"\s*(?:\|[^|]*\|)?\s*(?=([A-Za-z0-9_.\-]+))"
+# A chain's first hop must start at true line-start, so arrow-like text inside a node's
+# own shape label (`a[Does X -> Y?]`) is never mistaken for an edge. Later hops in the same
+# chain resume wherever the previous hop's target began, with no such anchor.
+EDGE_START = re.compile(r"^[ \t]*" + _HOP, re.MULTILINE)
+EDGE_CONTINUE = re.compile(_HOP)
 NODE_DECL = re.compile(r"^\s*([A-Za-z0-9_.\-]+)\s*(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})\s*$", re.MULTILINE)
 PARTICIPANT = re.compile(r"^\s*(?:participant|actor)\s+([A-Za-z0-9_.\-]+)", re.MULTILINE)
 # A node drawn as a decision diamond `id{...}` or hexagon `id{{...}}` is flow control, not a
@@ -68,6 +74,32 @@ RESERVED = {
 
 def line_of(text: str, idx: int) -> int:
     return text.count("\n", 0, idx) + 1
+
+
+def chain_edges(body: str) -> list[tuple[str, str]]:
+    """Every edge in a diagram body, following multi-hop chains on one line.
+
+    `a --> b --> c` declares two edges, not one. Each chain's first hop is found anchored
+    to line-start (see EDGE_START); each further hop resumes matching exactly where the
+    previous hop's target began, threading the chain without re-anchoring."""
+    edges: list[tuple[str, str]] = []
+    for m in EDGE_START.finditer(body):
+        source, target = m.group(1), m.group(2)
+        pos = m.end()
+        while True:
+            edges.append((source, target))
+            m2 = EDGE_CONTINUE.match(body, pos)
+            if not m2:
+                break
+            source, target = m2.group(1), m2.group(2)
+            pos = m2.end()
+    return edges
+
+
+def diagram_kind(body: str) -> str | None:
+    """The directive keyword (e.g. `sequencediagram`) opening a diagram body, if any."""
+    m = DIRECTIVE.search(body)
+    return m.group(1).lower() if m else None
 
 
 def diagram_blocks(text: str) -> list[dict]:
@@ -91,7 +123,7 @@ def graph_entities(body: str) -> tuple[set[str], list[tuple[str, str]], set[str]
     reviewers to ignore the category that also catches a genuinely missing component."""
     edges = [
         (a, b)
-        for a, b in EDGE.findall(body)
+        for a, b in chain_edges(body)
         if a.lower() not in RESERVED and b.lower() not in RESERVED
     ]
     nodes = {n for edge in edges for n in edge}
@@ -177,12 +209,24 @@ def check(text: str) -> dict:
 
     for block in blocks:
         nodes, edges, gateways = graph_entities(block["body"])
+        kind = diagram_kind(block["body"])
         all_graph_norm |= {_norm(n) for n in nodes}
         gateway_norm = {_norm(g) for g in gateways}
         loc = f"line {block['line']}"
 
         if not nodes and not edges:
-            if DIRECTIVE.search(block["body"]) or not block["body"].strip():
+            # classDiagram/erDiagram relation syntax (`*--`, `..>`, `||--o{`, ...) isn't
+            # recognized by EDGE, so an empty parse there usually means "we don't
+            # understand this diagram's own relationship syntax", not "the author left it
+            # empty" — not flagged, for the same reason the table-row-with-no-diagram rule
+            # was removed. A block with nothing at all beyond the directive keyword is
+            # still flagged either way.
+            if kind in {"classdiagram", "erdiagram"}:
+                remainder = DIRECTIVE.sub("", block["body"], count=1).strip()
+                should_flag = not remainder
+            else:
+                should_flag = bool(DIRECTIVE.search(block["body"])) or not block["body"].strip()
+            if should_flag:
                 findings.append({
                     "category": "unparsed_diagram", "location": loc,
                     "detail": "diagram block declares no nodes or edges",
@@ -190,7 +234,10 @@ def check(text: str) -> dict:
             continue
 
         for a, b in edges:
-            if _norm(a) == _norm(b):
+            # A self-call in a sequence diagram and a self-transition in a state diagram
+            # are idiomatic and valid; only a flowchart/graph component depending on
+            # itself is a real defect.
+            if _norm(a) == _norm(b) and kind not in {"sequencediagram", "statediagram", "statediagram-v2"}:
                 findings.append({
                     "category": "self_edge", "location": loc,
                     "detail": f"{a!r} depends on itself",

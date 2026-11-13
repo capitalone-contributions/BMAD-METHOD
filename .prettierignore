@@ -10,6 +10,7 @@ _bmad*/
 
 # IDE integration folders (user-specific, not in repo)
 .junie/
+.vscode/
 
 # Quality scan artifacts produced by bmad-workflow-builder
 # (per-skill .analysis/ folders contain JSON/HTML reports that should
