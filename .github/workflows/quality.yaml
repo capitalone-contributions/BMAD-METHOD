@@ -122,6 +122,9 @@ jobs:
       - name: Test modernization-roadmap linter
         run: npm run test:modernization-roadmap
 
+      - name: Test diagram lens checker
+        run: npm run test:review-diagram
+
       - name: Validate file references
         run: npm run validate:refs
 

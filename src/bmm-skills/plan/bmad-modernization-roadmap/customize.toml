@@ -74,6 +74,7 @@ finalize_reviewers = [
   "Attack the wave sequencing as an adversary: find any ordering that exists because it reads well rather than because a real cutover dependency forces it, and any wave whose components could ship independently. Each one you find is a wave that should split or run in parallel.",
   "Take the highest-risk wave and fail it mid-rollout. Walk the stated rollback path step by step against the component's data migration and contract changes: is the rollback actually reversible, or does it assume a reversibility the migration does not have? Flag every guarantee whose named mechanism would not hold.",
   "Check each claimed guarantee against the mechanism named for it, and each High-tier component against the rubric's isolation rule (a High-tier component does not share a wave with unrelated risky work). A guarantee with no mechanism behind it is a hope; report it.",
+  "skill:bmad-review lenses=diagram",
 ]
 
 # Document standards applied to the rendered roadmap at finalize. Each entry is a `skill:`,

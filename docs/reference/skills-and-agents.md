@@ -111,6 +111,7 @@ Reviews a diff, document, or other artifact through one or more lenses and repor
 | **Adversarial**      | Anything   | Forced-finding review that looks for what is missing, not only what is wrong           |
 | **Edge case**        | Anything   | Walks every branching path and boundary condition in content that defines behavior     |
 | **Verification gap** | Code       | Finds changed behavior that could regress without reliable verification catching it    |
+| **Diagram**          | Anything   | Checks diagrams against the tables and prose that describe the same entities           |
 | **Structure**        | Documents  | Proposes cuts, merges, moves, and condensing                                           |
 | **Prose**            | Documents  | Copy-edits for issues that impede comprehension; runs on top of the structure findings |
 
@@ -119,7 +120,7 @@ The two editorial lenses hold content sacrosanct: they critique only how a docum
 **Input:** the content (a diff, branch, uncommitted changes, file, or document) and optionally the lenses to run. **Output:** findings grouped by lens, as JSON, markdown, or both.
 
 :::note[Who runs it]
-`bmad-retrospective` runs the code lenses over a completed epic's diff. The product brief, PRD, UX, and architecture skills run the editorial lenses at their finalize step. `bmad-build` and `bmad-code-review` use their own reviewer layers; see [Review a Change](../build/review-a-change.md).
+`bmad-retrospective` runs the code lenses over a completed epic's diff. The product brief, PRD, UX, and architecture skills run the editorial lenses at their finalize step. The architecture and modernization-roadmap skills also run the diagram lens at their Reviewer Gate. `bmad-build` and `bmad-code-review` use their own reviewer layers; see [Review a Change](../build/review-a-change.md).
 :::
 
 ### bmad-customize

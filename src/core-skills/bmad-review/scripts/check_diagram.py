@@ -10,18 +10,22 @@ comparison sees that `payments` is a node in the graph and absent from the table
 script owns the checks a script does better than a prompt and leaves the semantic half
 (is this the right decomposition? is the boundary sound?) to the lens.
 
-It reads a markdown artifact and reports, as compact JSON on stdout:
+It reads a markdown artifact and reports, as JSON on stdout:
 
-  - unparsed_diagram   a fenced diagram block whose body declares no nodes or edges
-  - undeclared_node    a node in the graph with no row in any table in the document
-  - untraced_row       a table row naming an entity that appears in no graph
-  - self_edge          a node that depends on itself
-  - duplicate_edge     the same directed edge declared twice
-  - orphan_node        a declared node with no edges at all
+  - empty_diagram      a mermaid block with nothing in it beyond its directive line
+  - undeclared_node    a flowchart node (by id or label) with no row in any table
+  - self_edge          a flowchart node that depends on itself
+  - duplicate_edge     the same directed flowchart edge declared twice
+  - orphan_node        a flowchart node declared with no edges at all
 
-Mermaid `graph`/`flowchart`, `sequenceDiagram`, and `stateDiagram` bodies are recognized.
+Only mermaid `graph`/`flowchart` blocks get the structural checks; every other mermaid
+type (sequence, state, ER, class, C4, mindmap, ...) is only checked for being empty.
 Reported lines are absolute file lines. Exit code is always 0 — findings travel in the
 JSON; the caller decides what to do with them.
+
+lint_roadmap.py (bmad-modernization-roadmap) has its own mermaid edge regex, the ancestor
+of this parser. Skill scripts ship standalone, so they can't share an import; a parity test
+in tests/ catches drift instead.
 
 Renderer-level validity (does this compile, does it lay out) is not this script's job:
 the lens delegates that to a renderer when one is available.
@@ -33,106 +37,59 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.dont_write_bytecode = True
 
 FENCE = re.compile(r"^```(\w+)[^\n]*\n(.*?)^```", re.DOTALL | re.MULTILINE)
-DIAGRAM_LANGS = {"mermaid"}
-# Arrow alternation is longest-first: `->` placed before `-->` would match the first two
-# characters and leave `-` as the target node. The final alternative matches a dash-style
-# inline edge label with no `|pipe|` (`a-- some text -->b`) — common mermaid syntax that
-# the literal tokens alone don't cover.
-ARROW = r"(?:-\.->|-->>|==>|-->|---|->>|=>|->|--[ \t]*[^\n|]+?[ \t]*(?:-->|---))"
-SHAPE = r"(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})"
-# One hop: source node, optional shape, arrow, optional pipe label, then a zero-width
-# lookahead on the target so the match doesn't consume it — the target can then serve as
-# the source of the next hop when a line chains edges (`a --> b --> c`).
-_HOP = r"([A-Za-z0-9_.\-]+?)\s*" + SHAPE + r"?\s*" + ARROW + r"\s*(?:\|[^|]*\|)?\s*(?=([A-Za-z0-9_.\-]+))"
-# A chain's first hop must start at true line-start, so arrow-like text inside a node's
-# own shape label (`a[Does X -> Y?]`) is never mistaken for an edge. Later hops in the same
-# chain resume wherever the previous hop's target began, with no such anchor.
-EDGE_START = re.compile(r"^[ \t]*" + _HOP, re.MULTILINE)
-EDGE_CONTINUE = re.compile(_HOP)
-NODE_DECL = re.compile(r"^\s*([A-Za-z0-9_.\-]+)\s*(?:\[[^\]]*\]|\([^)]*\)|\{[^}]*\})\s*$", re.MULTILINE)
-PARTICIPANT = re.compile(r"^\s*(?:participant|actor)\s+([A-Za-z0-9_.\-]+)", re.MULTILINE)
-# A node drawn as a decision diamond `id{...}` or hexagon `id{{...}}` is flow control, not a
-# component — captured anywhere it appears, even inline on an edge line.
-GATEWAY_DECL = re.compile(r"([A-Za-z0-9_.\-]+)\{\{?[^}]*\}\}?")
-DIRECTIVE = re.compile(
-    r"^\s*(graph|flowchart|sequenceDiagram|stateDiagram(?:-v2)?|classDiagram|erDiagram)\b"
+# Flowchart lines that never declare nodes or edges.
+LAYOUT = re.compile(r"(?:subgraph|end|direction|style|classDef|class|click|linkStyle)(?!\S)")
+# Ids never end with `-`, so `a-->b` can't yield a node `a--`.
+ID = r"\w+(?:[-.]\w+)*"
+# One node: id, optional shape (`[..]`, `((..))`, `[(..)]`, `>..]`, `{{..}}`, `["a [x]"]`, ...),
+# optional `@{ .. }`, optional `:::class`, optional `&` + next. A shape closes only on its own
+# bracket kind, so `svc[Order (legacy) Service]` and `a{Is it [ok]?}` keep their labels.
+SHAPE = r'\[(?:"[^"]*"|[^\]"])*\]+|\((?:"[^"]*"|[^)"])*\)+|\{(?:"[^"]*"|[^}"])*\}+|>(?:"[^"]*"|[^\]"])*\]'
+NODE = re.compile(
+    r"\s*(?P<id>" + ID + r")(?P<shape>" + SHAPE + r")?(?:@\{[^}]*\})?(?::::\w+(?:-\w+)*)?\s*(?P<amp>&)?"
 )
-# Mermaid keywords and layout directions that are never entity names.
-RESERVED = {
-    "graph", "flowchart", "subgraph", "end", "sequencediagram", "statediagram",
-    "statediagram-v2", "classdiagram", "erdiagram", "participant", "actor", "note",
-    "loop", "alt", "else", "opt", "par", "and", "rect", "activate", "deactivate",
-    "lr", "rl", "tb", "bt", "td", "direction", "class", "click", "style", "linkstyle",
-    "classdef", "state", "title", "accdescr", "acctitle",
-}
+# One link: optional edge id `e1@`, optional start head (`<-->`, `o--o`), optional text
+# opener (`-- text -->`, `A--Yes-->B`, `-. text .->`), the line itself, optional `|label|`.
+# Text never starts with an arrow character or an `o`/`x` head, which would let
+# `A --o B --> C` swallow B; a closing `--`/`==` needs its head, so `-- a == b -->` is one link.
+LINK = re.compile(
+    r"\s*(?:\w+@)?[<ox]?(?:(?:--|==|-\.)(?:\s|(?![ox]\b)[^\s|>.=-])[^|]*?)?"
+    r"(?:-{2,}(?:>|[ox]\b)|-{3,}|={2,}(?:>|[ox]\b)|={3,}|-?\.+-(?:>|[ox]\b)?|~{3,})"
+    r"(?:\s*\|[^|]*\|)?"
+)
 
 
 def line_of(text: str, idx: int) -> int:
     return text.count("\n", 0, idx) + 1
 
 
-def chain_edges(body: str) -> list[tuple[str, str]]:
-    """Every edge in a diagram body, following multi-hop chains on one line.
+def parse_line(line: str) -> tuple[list[re.Match], list[tuple[str, str]]]:
+    """Node matches and edges on one flowchart line.
 
-    `a --> b --> c` declares two edges, not one. Each chain's first hop is found anchored
-    to line-start (see EDGE_START); each further hop resumes matching exactly where the
-    previous hop's target began, threading the chain without re-anchoring."""
-    edges: list[tuple[str, str]] = []
-    for m in EDGE_START.finditer(body):
-        source, target = m.group(1), m.group(2)
-        pos = m.end()
-        while True:
-            edges.append((source, target))
-            m2 = EDGE_CONTINUE.match(body, pos)
-            if not m2:
+    Scans left to right — node group, link, node group, ... — and stops at the first thing
+    that doesn't fit. `a & b --> c` is two edges; `a --> b --> c` is a chain of two. A line
+    that is neither a lone node group nor an edge yields nothing."""
+    nodes, edges, group, pos = [], [], [], 0
+    while True:
+        nxt = []
+        while m := NODE.match(line, pos):
+            nxt.append(m)
+            pos = m.end()
+            if not m["amp"]:
                 break
-            source, target = m2.group(1), m2.group(2)
-            pos = m2.end()
-    return edges
-
-
-def diagram_kind(body: str) -> str | None:
-    """The directive keyword (e.g. `sequencediagram`) opening a diagram body, if any."""
-    m = DIRECTIVE.search(body)
-    return m.group(1).lower() if m else None
-
-
-def diagram_blocks(text: str) -> list[dict]:
-    """Every fenced diagram block: its body, language, and absolute start line."""
-    blocks = []
-    for m in FENCE.finditer(text):
-        lang = m.group(1).lower()
-        if lang not in DIAGRAM_LANGS:
-            continue
-        blocks.append({"lang": lang, "body": m.group(2), "line": line_of(text, m.start())})
-    return blocks
-
-
-def graph_entities(body: str) -> tuple[set[str], list[tuple[str, str]], set[str]]:
-    """Nodes, directed edges, and gateway ids declared in one diagram body.
-
-    A gateway is a node drawn as a decision diamond (`id{...}`) or hexagon (`id{{...}}`) —
-    mermaid flow control, not a system component. They are real nodes for cycle, self-edge,
-    and orphan purposes, but must not be cross-checked against a component table: a
-    `decision{approve?}` diamond legitimately has no table row, and flagging it would train
-    reviewers to ignore the category that also catches a genuinely missing component."""
-    edges = [
-        (a, b)
-        for a, b in chain_edges(body)
-        if a.lower() not in RESERVED and b.lower() not in RESERVED
-    ]
-    nodes = {n for edge in edges for n in edge}
-    for rx in (NODE_DECL, PARTICIPANT):
-        for name in rx.findall(body):
-            if name.lower() not in RESERVED:
-                nodes.add(name)
-    gateways = {g for g in GATEWAY_DECL.findall(body) if g.lower() not in RESERVED}
-    return nodes, edges, gateways
+        edges += [(a["id"], b["id"]) for a in group for b in nxt]
+        nodes += nxt
+        link = nxt and LINK.match(line, pos)
+        if not link:
+            break
+        group, pos = nxt, link.end()
+    return (nodes, edges) if edges or pos == len(line) else ([], [])
 
 
 def table_entities(text: str) -> set[str]:
@@ -196,100 +153,95 @@ def _bare(cell: str) -> str:
 
 
 def _norm(name: str) -> str:
-    """Compare entity names ignoring case and separator style."""
-    return re.sub(r"[\s_.\-]+", "", name).lower()
+    """Compare entity names ignoring case, separators, and punctuation other than `#`/`+`."""
+    return re.sub(r"[^\w#+]+|_", "", name).lower()
 
 
 def check(text: str) -> dict:
     findings: list[dict] = []
-    blocks = diagram_blocks(text)
-    table_names = table_entities(text)
-    table_norm = {_norm(t) for t in table_names}
-    all_graph_norm: set[str] = set()
+    table_norm = {_norm(t) for t in table_entities(text)}
+    blocks = [m for m in FENCE.finditer(text) if m[1].lower() == "mermaid"]
 
     for block in blocks:
-        nodes, edges, gateways = graph_entities(block["body"])
-        kind = diagram_kind(block["body"])
-        all_graph_norm |= {_norm(n) for n in nodes}
-        gateway_norm = {_norm(g) for g in gateways}
-        loc = f"line {block['line']}"
+        loc = f"line {line_of(text, block.start())}"
 
-        if not nodes and not edges:
-            # classDiagram/erDiagram relation syntax (`*--`, `..>`, `||--o{`, ...) isn't
-            # recognized by EDGE, so an empty parse there usually means "we don't
-            # understand this diagram's own relationship syntax", not "the author left it
-            # empty" — not flagged, for the same reason the table-row-with-no-diagram rule
-            # was removed. A block with nothing at all beyond the directive keyword is
-            # still flagged either way.
-            if kind in {"classdiagram", "erdiagram"}:
-                remainder = DIRECTIVE.sub("", block["body"], count=1).strip()
-                should_flag = not remainder
-            else:
-                should_flag = bool(DIRECTIVE.search(block["body"])) or not block["body"].strip()
-            if should_flag:
-                findings.append({
-                    "category": "unparsed_diagram", "location": loc,
-                    "detail": "diagram block declares no nodes or edges",
-                })
+        def add(category: str, detail: str) -> None:
+            findings.append({"category": category, "location": loc, "detail": detail})
+
+        body = re.sub(r"%%\{.*?\}%%", "", block[2], flags=re.DOTALL)  # init, even multi-line
+        body = re.sub(r'"`.*?`"', lambda m: m[0].replace("\n", " "), body, flags=re.DOTALL)
+        lines = [raw.strip().rstrip(";").rstrip() for raw in body.splitlines()]
+        lines = [line for line in lines if line and not line.startswith("%%")]
+        if lines[:1] == ["---"] and "---" in lines[1:]:
+            lines = lines[lines.index("---", 1) + 1:]  # YAML frontmatter
+        if len(lines) < 2:
+            add("empty_diagram", "diagram block declares nothing beyond its directive")
+            continue
+        if not re.match(r"(?:graph|flowchart)\b", lines[0]):
             continue
 
-        for a, b in edges:
-            # A self-call in a sequence diagram and a self-transition in a state diagram
-            # are idiomatic and valid; only a flowchart/graph component depending on
-            # itself is a real defect.
-            if _norm(a) == _norm(b) and kind not in {"sequencediagram", "statediagram", "statediagram-v2"}:
-                findings.append({
-                    "category": "self_edge", "location": loc,
-                    "detail": f"{a!r} depends on itself",
-                })
+        # names: every id with its labels. A gateway is a node drawn as a decision diamond
+        # `id{..}` or hexagon `id{{..}}` — flow control, not a component — so it is never
+        # cross-checked: a `decision{approve?}` legitimately has no table row, and flagging
+        # it would train reviewers to ignore the category.
+        names: dict[str, set[str]] = {}
+        gateways: set[str] = set()
+        edges: list[tuple[str, str]] = []
+        mentions: Counter[str] = Counter()
+        for line in lines[1:]:
+            if LAYOUT.match(line):
+                continue
+            nodes, line_edges = parse_line(line)
+            edges += line_edges
+            for n in nodes:
+                label = re.split(r"<br\s*/?>", n["shape"] or "", flags=re.I)[0]
+                names.setdefault(n["id"], {n["id"]}).add(label or n["id"])
+                if (n["shape"] or "").startswith("{"):
+                    gateways.add(n["id"])
+            mentions.update(set(re.findall(ID, line)))
+        # `e1@{ animate: true }` styles the edge declared as `a e1@--> b`; it isn't a node.
+        for edge_id in re.findall(r"\b(\w+)@(?=[<ox]?[-=.~])", body):
+            names.pop(edge_id, None)
+
         seen: set[tuple[str, str]] = set()
         for a, b in edges:
             key = (_norm(a), _norm(b))
+            if key[0] == key[1]:
+                add("self_edge", f"{a!r} depends on itself")
             if key in seen:
-                findings.append({
-                    "category": "duplicate_edge", "location": loc,
-                    "detail": f"edge {a} -> {b} declared more than once",
-                })
+                add("duplicate_edge", f"edge {a} -> {b} declared more than once")
             seen.add(key)
 
         connected = {n for edge in edges for n in edge}
-        for n in sorted(nodes - connected):
-            findings.append({
-                "category": "orphan_node", "location": loc,
-                "detail": f"{n!r} is declared but has no edges",
-            })
+        for n in sorted(names.keys() - connected):
+            # An id that also appears on another line sits on an edge this parser didn't
+            # understand — skip it rather than report a false orphan.
+            if mentions[n] < 2:
+                add("orphan_node", f"{n!r} is declared but has no edges")
 
-        # Cross-check names against tables only when this graph overlaps them at all. A
-        # graph whose nodes are entirely absent from every table is describing a different
-        # layer on purpose — a build graph naming generated artifacts, a state machine
-        # naming states — and flagging every node would be noise, not signal. A graph that
-        # overlaps partially is the interesting case: those are real omissions.
-        if table_norm:
-            node_norms = {_norm(n) for n in nodes}
-            if node_norms & table_norm:
-                for n in sorted(nodes):
-                    # Gateways are flow control, not components — never cross-checked.
-                    if _norm(n) not in table_norm and _norm(n) not in gateway_norm:
-                        findings.append({
-                            "category": "undeclared_node", "location": loc,
-                            "detail": f"{n!r} appears in the diagram but in no table row",
-                        })
+        # Cross-check names against tables only when one of this graph's ids is in a table.
+        # A graph with none is describing a different layer on purpose — a build graph
+        # naming generated artifacts — and flagging every node would be noise. A label match
+        # alone (`pg[(PostgreSQL)]` beside a stack table) is too incidental to open the gate,
+        # but once it is open a node passes on its id or its label.
+        def listed(n: str) -> bool:
+            return any(_norm(x) in table_norm for x in names[n])
+
+        if any(_norm(n) in table_norm for n in names):
+            for n in sorted(names.keys() - gateways):
+                if not listed(n):
+                    add("undeclared_node", f"{n!r} appears in the diagram but in no table row")
 
     # Deliberately not checked: a table row naming something no diagram draws. On real
     # documents that fires constantly and almost always wrongly — a page with one
-    # illustrative diagram and several unrelated reference tables is normal, and no rule in
-    # this framework says every table row must be drawn. Whether the diagram omits
-    # something that matters is a judgment call, so the lens's semantic pass owns it
-    # (completeness against the prose) rather than a set difference here.
+    # illustrative diagram and several unrelated reference tables is normal. Whether the
+    # diagram omits something that matters is a judgment call the lens's semantic pass owns.
 
-    counts: dict[str, int] = {}
-    for f in findings:
-        counts[f["category"]] = counts.get(f["category"], 0) + 1
     return {
-        "ok": len(findings) == 0,
+        "ok": not findings,
         "diagram_blocks": len(blocks),
         "total_findings": len(findings),
-        "by_category": counts,
+        "by_category": dict(Counter(f["category"] for f in findings)),
         "findings": findings,
     }
 

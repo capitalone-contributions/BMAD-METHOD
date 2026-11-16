@@ -11,13 +11,19 @@ You review the diagrams in an artifact, not the artifact's prose. A diagram and 
 
 ## Step 1: Mechanical pass
 
-Run the deterministic checker on the artifact:
+Run the deterministic checker on each file that holds a diagram in scope:
 
 ```bash
-uv run --python 3.11 {skill-root}/scripts/check_diagram.py <artifact-path> --json
+uv run {skill-root}/scripts/check_diagram.py <file>
 ```
 
-It reports five categories, each already a finding: `unparsed_diagram`, `undeclared_node`, `self_edge`, `duplicate_edge`, `orphan_node`. Carry each one through to your output — the mechanical pass is the floor, not a suggestion. If the checker cannot run, say so in one line and continue with Steps 2–4 by reading the diagram yourself.
+- **A file:** run it on that file.
+- **A diff:** run it on each changed markdown file's post-image, never on the diff itself — every diff line starts with `+` or a space, so the checker sees no diagrams. For uncommitted work the post-image is the working-tree file at the `+++ b/` path; otherwise write `git show <new>` to a temp file, taking `<new>` from that file's `index <old>..<new>` line. Keep only findings on diagram blocks the diff added or changed, or whose tables it changed.
+- **Pasted content:** write it to a temp file first.
+
+It reports five categories: `empty_diagram`, `undeclared_node`, `self_edge`, `duplicate_edge`, `orphan_node`. It reads `graph`/`flowchart` structure only; any other diagram type is checked for emptiness alone and gets its real review in Step 3. Carry each result through as a finding unless the diagram source plainly refutes it — an "orphan" joined by syntax the checker does not parse, say — and then drop it.
+
+If the checker exits non-zero, returns an `error` key, or reports `diagram_blocks: 0` for content that visibly holds a mermaid block, the mechanical pass did not run. Report that as a finding — `location: "general"`, `trigger_condition: "mechanical pass did not run: <reason>"` — then continue with Steps 2–4 by reading the diagram yourself.
 
 ## Step 2: Renderer pass — optional
 
