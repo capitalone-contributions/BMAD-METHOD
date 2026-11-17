@@ -257,6 +257,10 @@ graph LR
             "state_star": "stateDiagram-v2\n  [*] --> Idle\n  Idle --> [*]",
             "er_relation": "erDiagram\n    CUSTOMER ||--o{ ORDER : places",
             "er_attributes": "erDiagram\n  CUSTOMER {\n    string name\n  }\n  CUSTOMER ||--o{ ORDER : places",
+            # entities with no relations at all are a valid ER diagram, not an empty one
+            "er_entity_only": "erDiagram\n  CUSTOMER",
+            "er_entities_no_relations": "erDiagram\n  CUSTOMER {\n    string id PK\n  }\n  ORDER {\n    string id PK\n  }",
+            "class_declaration_only": "classDiagram\n  class Animal",
             "class_relation": "classDiagram\n    Animal *-- Dog : owns",
             "c4": 'C4Context\n  Person(customer, "Customer")\n  Rel(customer, bank, "Uses")',
             "mindmap": "mindmap\n  root((Tools))\n    Pen[Pen]\n    Pencil",
@@ -288,6 +292,7 @@ graph LR
         cases = {"A <--> B": ab, "A:::hot --> B": ab, "A ---> B": ab, "A ====> B": ab,
                  "A --o B": ab, "A --x B": ab, "A -. maybe .-> B": ab, "A e1@--> B": ab,
                  "A ~~~ B": ab, "A-->|sync|B": ab, "A --> |sync| B": ab, "A:::hot-->B": ab,
+                 'A -->|"a | b"| B': ab,
                  "A--Yes-->B": ab, "A==go==>B": ab, "A-.retry.->B": ab, "A --oauth--> B": ab,
                  "A@{ shape: rect } --> B": ab, "A -- status == ok --> B": ab, "A -. a--b .-> B": ab,
                  "A[Order (legacy) Service] --> B": ab, "A{Is it [ok]?} --> B": ab,

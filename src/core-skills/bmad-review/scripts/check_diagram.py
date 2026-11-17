@@ -55,13 +55,14 @@ NODE = re.compile(
     r"\s*(?P<id>" + ID + r")(?P<shape>" + SHAPE + r")?(?:@\{[^}]*\})?(?::::\w+(?:-\w+)*)?\s*(?P<amp>&)?"
 )
 # One link: optional edge id `e1@`, optional start head (`<-->`, `o--o`), optional text
-# opener (`-- text -->`, `A--Yes-->B`, `-. text .->`), the line itself, optional `|label|`.
+# opener (`-- text -->`, `A--Yes-->B`, `-. text .->`), the line itself, optional `|label|`
+# (a quoted part of it may hold `|`, so `-->|"a | b"| c` still ends at `c`).
 # Text never starts with an arrow character or an `o`/`x` head, which would let
 # `A --o B --> C` swallow B; a closing `--`/`==` needs its head, so `-- a == b -->` is one link.
 LINK = re.compile(
     r"\s*(?:\w+@)?[<ox]?(?:(?:--|==|-\.)(?P<dashlabel>(?:\s|(?![ox]\b)[^\s|>.=-])[^|]*?))?"
     r"(?:-{2,}(?:>|[ox]\b)|-{3,}|={2,}(?:>|[ox]\b)|={3,}|-?\.+-(?:>|[ox]\b)?|~{3,})"
-    r"(?:\s*\|(?P<pipelabel>[^|]*)\|)?"
+    r"(?:\s*\|(?P<pipelabel>(?:\"[^\"]*\"|[^|\"])*)\|)?"
 )
 
 
