@@ -59,9 +59,9 @@ NODE = re.compile(
 # Text never starts with an arrow character or an `o`/`x` head, which would let
 # `A --o B --> C` swallow B; a closing `--`/`==` needs its head, so `-- a == b -->` is one link.
 LINK = re.compile(
-    r"\s*(?:\w+@)?[<ox]?(?:(?:--|==|-\.)(?:\s|(?![ox]\b)[^\s|>.=-])[^|]*?)?"
+    r"\s*(?:\w+@)?[<ox]?(?:(?:--|==|-\.)(?P<dashlabel>(?:\s|(?![ox]\b)[^\s|>.=-])[^|]*?))?"
     r"(?:-{2,}(?:>|[ox]\b)|-{3,}|={2,}(?:>|[ox]\b)|={3,}|-?\.+-(?:>|[ox]\b)?|~{3,})"
-    r"(?:\s*\|[^|]*\|)?"
+    r"(?:\s*\|(?P<pipelabel>[^|]*)\|)?"
 )
 
 
@@ -69,13 +69,17 @@ def line_of(text: str, idx: int) -> int:
     return text.count("\n", 0, idx) + 1
 
 
-def parse_line(line: str) -> tuple[list[re.Match], list[tuple[str, str]]]:
-    """Node matches and edges on one flowchart line.
+def parse_line(line: str) -> tuple[list[re.Match], list[tuple[str, str]], list[str]]:
+    """Node matches, (source, target) edges, and each edge's label, on one flowchart line.
 
     Scans left to right — node group, link, node group, ... — and stops at the first thing
     that doesn't fit. `a & b --> c` is two edges; `a --> b --> c` is a chain of two. A line
-    that is neither a lone node group nor an edge yields nothing."""
-    nodes, edges, group, pos = [], [], [], 0
+    that is neither a lone node group nor an edge yields nothing. A link's label (`|label|`,
+    or the dash-style text before its closing arrow) belongs to the edge(s) it closes, so
+    it's carried from the link matched in the previous step into the edges built here —
+    `edges` stays plain `(a, b)` pairs so existing callers (and the `lint_roadmap.py` parity
+    check) are untouched; `labels` is a same-length, same-order parallel list."""
+    nodes, edges, labels, group, pos, label = [], [], [], [], 0, ""
     while True:
         nxt = []
         while m := NODE.match(line, pos):
@@ -83,13 +87,17 @@ def parse_line(line: str) -> tuple[list[re.Match], list[tuple[str, str]]]:
             pos = m.end()
             if not m["amp"]:
                 break
-        edges += [(a["id"], b["id"]) for a in group for b in nxt]
+        for a in group:
+            for b in nxt:
+                edges.append((a["id"], b["id"]))
+                labels.append(label)
         nodes += nxt
         link = nxt and LINK.match(line, pos)
         if not link:
             break
+        label = (link["pipelabel"] or link["dashlabel"] or "").strip()
         group, pos = nxt, link.end()
-    return (nodes, edges) if edges or pos == len(line) else ([], [])
+    return (nodes, edges, labels) if edges or pos == len(line) else ([], [], [])
 
 
 def table_entities(text: str) -> set[str]:
@@ -187,12 +195,14 @@ def check(text: str) -> dict:
         names: dict[str, set[str]] = {}
         gateways: set[str] = set()
         edges: list[tuple[str, str]] = []
+        labels: list[str] = []
         mentions: Counter[str] = Counter()
         for line in lines[1:]:
             if LAYOUT.match(line):
                 continue
-            nodes, line_edges = parse_line(line)
+            nodes, line_edges, line_labels = parse_line(line)
             edges += line_edges
+            labels += line_labels
             for n in nodes:
                 label = re.split(r"<br\s*/?>", n["shape"] or "", flags=re.I)[0]
                 names.setdefault(n["id"], {n["id"]}).add(label or n["id"])
@@ -203,11 +213,16 @@ def check(text: str) -> dict:
         for edge_id in re.findall(r"\b(\w+)@(?=[<ox]?[-=.~])", body):
             names.pop(edge_id, None)
 
-        seen: set[tuple[str, str]] = set()
-        for a, b in edges:
-            key = (_norm(a), _norm(b))
-            if key[0] == key[1]:
+        seen: set[tuple[str, str, str]] = set()
+        for (a, b), edge_label in zip(edges, labels):
+            # Self-edge identity is case-insensitive only: unlike the table cross-check
+            # below, it must not also strip separators, or two distinct mermaid ids that
+            # differ only by `_` vs `-` (`api_gw`, `api-gw`) collide into a false positive.
+            if a.lower() == b.lower():
                 add("self_edge", f"{a!r} depends on itself")
+            # The label is part of the duplicate key: `a -->|yes| b` and `a -->|retry| b`
+            # are two genuinely different edges, not a duplicate.
+            key = (_norm(a), _norm(b), edge_label.lower())
             if key in seen:
                 add("duplicate_edge", f"edge {a} -> {b} declared more than once")
             seen.add(key)

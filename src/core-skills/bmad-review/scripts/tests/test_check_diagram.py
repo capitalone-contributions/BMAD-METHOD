@@ -80,6 +80,25 @@ class CheckDiagramTest(unittest.TestCase):
         )
         self.assertIn("duplicate_edge", self.cats(check(text)))
 
+    def test_distinct_ids_differing_only_by_separator_are_not_a_self_edge(self):
+        # mermaid treats `api_gw` and `api-gw` as different ids; `_norm` strips both `_`
+        # and `-` for the (deliberately loose) table cross-check, but self-edge identity
+        # must not use that same loose match or these collide into a false positive
+        text = """```mermaid
+graph LR
+  api_gw --> api-gw
+```
+"""
+        self.assertNotIn("self_edge", self.cats(check(text)))
+
+    def test_differently_labeled_edges_are_not_duplicates(self):
+        text = "```mermaid\ngraph LR\n  a -->|yes| b\n  a -->|retry| b\n```\n"
+        self.assertNotIn("duplicate_edge", self.cats(check(text)))
+
+    def test_identically_labeled_edges_are_still_a_duplicate(self):
+        text = "```mermaid\ngraph LR\n  a-- x -->b\n  a-- x -->b\n```\n"
+        self.assertIn("duplicate_edge", self.cats(check(text)))
+
     def test_orphan_node_caught(self):
         text = CLEAN.replace("```mermaid\ngraph LR\n", "```mermaid\ngraph LR\n  notifier[Notifier]\n")
         text = text.replace("  ledger --> notifier\n", "")
@@ -180,9 +199,9 @@ graph LR
         self.assertIn("self_edge", self.cats(check(text)))
 
     def test_duplicate_edge_caught_across_different_arrow_spellings(self):
-        # the same edge declared once plainly and once with an inline label must still
-        # normalize to one duplicate, not two distinct edges
-        text = "# Doc\n\n```mermaid\ngraph LR\n  a --> b\n  a-- again -->b\n```\n"
+        # the same unlabeled edge written with two different arrow lengths is still one
+        # duplicate; a label would make it a distinct edge, so none is used here
+        text = "# Doc\n\n```mermaid\ngraph LR\n  a --> b\n  a ---> b\n```\n"
         self.assertIn("duplicate_edge", self.cats(check(text)))
 
     def test_hyphenated_label_text_does_not_break_parsing(self):
@@ -278,7 +297,7 @@ graph LR
             with self.subTest(line):
                 self.assertEqual(parse_line(line)[1], edges)
         # a line that is neither an edge nor a lone node group declares nothing
-        self.assertEqual(parse_line("accTitle: Payments"), ([], []))
+        self.assertEqual(parse_line("accTitle: Payments"), ([], [], []))
 
     def test_amp_and_nospace_chain_expand_to_real_edges(self):
         # `a & b --> c` is two edges and `a-->b-->c` is a->b, b->c, so a repeat is a duplicate

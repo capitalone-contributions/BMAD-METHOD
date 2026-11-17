@@ -66,9 +66,7 @@ output_preferences = ""
 # so. A renderer is never installed on demand, and its absence is never a finding.
 #
 # Example (set in team/user override TOML) using the archify skill:
-#   diagram_renderer = "Invoke the `archify` skill to validate the diagram, passing the
-#     mermaid source; treat only its reported errors as findings, never its styling
-#     preferences."
+#   diagram_renderer = "Invoke the `archify` skill to validate the diagram, passing the mermaid source; treat only its reported errors as findings, never its styling preferences."
 diagram_renderer = ""
 
 # --- Editorial lens settings (used by the structure and prose lenses) ---
